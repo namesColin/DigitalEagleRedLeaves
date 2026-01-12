@@ -27,9 +27,11 @@ async def main():
         print("红叶: ", end="", flush=True)
         response_stream = await hongye.chat(user_input)
 
+        full_response = ""  # 定义完整回复
         async for chunk in response_stream:
             content = chunk.choices[0].delta.content if chunk.choices[0].delta.content else ""
             print(content, end="", flush=True)
+            full_response += content  # 拼接
         print()
 
         # 1. 记住用户说的话 (如果没听过类似的)
