@@ -76,13 +76,32 @@ class SettingsDialog(QDialog):
             h_lay.addWidget(cb_chart)
             layout.addWidget(group)
 
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+
         btn_close = QPushButton("确定")
         btn_close.clicked.connect(self.accept)
         layout.addWidget(btn_close)
 
+        btn_quit = QPushButton("退出应用")
+        btn_quit.clicked.connect(self.quit_app)
+        btn_row.addWidget(btn_quit)
+
+        layout.addLayout(btn_row)
+
     def update_cfg(self, key, field, state):
         self.configs[key][field] = (state == Qt.Checked.value)
         self.parent().apply_settings()
+
+    def quit_app(self):
+        try:
+            # 先关闭父窗口（若需要），再退出应用
+            parent = self.parent()
+            if parent is not None:
+                parent.close()
+            QApplication.instance().quit()
+        except Exception as e:
+            print("退出应用失败:", e)
 
 
 class MonitorWidget(QWidget):
