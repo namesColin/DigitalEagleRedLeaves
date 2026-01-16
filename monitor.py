@@ -76,15 +76,19 @@ class SettingsDialog(QDialog):
 
             cb_show = QCheckBox(f"显示 {cfg['name']}")
             cb_show.setChecked(cfg['show'])
-            cb_show.stateChanged.connect(lambda state, k=key: self.update_cfg(k, 'show', state))
+            # use toggled(bool) (emits a Python bool) and keep a reference to the checkbox
+            cb_show.toggled.connect(lambda checked, k=key: self.update_cfg(k, 'show', checked))
 
             cb_chart = QCheckBox("显示图表")
             cb_chart.setChecked(cfg['show_chart'])
-            cb_chart.stateChanged.connect(lambda state, k=key: self.update_cfg(k, 'show_chart', state))
+            cb_chart.toggled.connect(lambda checked, k=key: self.update_cfg(k, 'show_chart', checked))
 
             h_lay.addWidget(cb_show)
             h_lay.addWidget(cb_chart)
             layout.addWidget(group)
+
+            # keep references so Python wrappers aren't GC'd while dialog is open
+            self.checks[key] = {'show': cb_show, 'chart': cb_chart}
 
         model_group = QFrame()
         model_lay = QHBoxLayout(model_group)
@@ -128,16 +132,25 @@ class SettingsDialog(QDialog):
         layout.addLayout(btn_row)
 
     def update_cfg(self, key, field, state):
-        self.configs[key][field] = (state == Qt.Checked)
+        # coerce incoming state (could be bool from toggled or int from stateChanged)
+        try:
+            if isinstance(state, bool):
+                val = state
+            else:
+                val = (state == Qt.Checked)
+            self.configs[key][field] = bool(val)
+        except Exception:
+            pass
         try:
             self.parent_widget.apply_settings()
         except Exception:
             pass
 
     def toggle_model_monitor(self, state):
-        enabled = (state == Qt.Checked)
+        # accept either bool (from toggled) or int (from stateChanged)
         try:
-            self.parent_widget.model_monitor_enabled = enabled
+            enabled = state if isinstance(state, bool) else (state == Qt.Checked)
+            self.parent_widget.model_monitor_enabled = bool(enabled)
             self.parent_widget.apply_settings()
         except Exception:
             pass
@@ -400,12 +413,17 @@ class MonitorWidget(QWidget):
         self.apply_settings()
 
     def update_cfg(self, key, field, state):
-        """从复选框回调更新 configs 并刷新显示"""
-        try:
-            self.configs[key][field] = (state == Qt.Checked)
+         """从复选框回调更新 configs 并刷新显示"""
+         try:
+            # accept bool (toggled) or int (stateChanged)
+            if isinstance(state, bool):
+                val = state
+            else:
+                val = (state == Qt.Checked)
+            self.configs[key][field] = bool(val)
             self.apply_settings()
-        except Exception:
-            pass
+         except Exception:
+             pass
 
     def _get_available_models(self):
         """返回 ollama list 的模型名列表，失败时返回空列表"""
@@ -568,8 +586,7 @@ class MonitorWidget(QWidget):
     def mouseMoveEvent(self, event):
         if self._drag_pos and event.buttons() & Qt.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
-
-
+            event.accept()
 
 
 if __name__ == "__main__":
