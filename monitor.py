@@ -266,6 +266,7 @@ class SettingsDialog(QDialog):
 class MonitorWidget(QWidget):
     def __init__(self):
         super().__init__()
+        self.checks = None
         self.model_label = None
         self.widgets = None
         self.layout = None
@@ -273,8 +274,8 @@ class MonitorWidget(QWidget):
         self.main_container = None
         self.settings_dialog = None
 
-        # Ollama 模型监控配置（默认关闭）
-        self.model_monitor_enabled = False
+        # Ollama 模型监控配置：默认开启
+        self.model_monitor_enabled = True
         self.model_monitor_name = ""
 
         # 记录上次尝试启动模型的时间（节流，秒）
@@ -293,6 +294,15 @@ class MonitorWidget(QWidget):
             'cuda': {'name': 'CUDA', 'color': QColor(180, 100, 255), 'show': True, 'show_chart': True}
         }
 
+        # 尝试在启动时选择一个默认模型（如果系统上有 ollama 且有模型）
+        try:
+            models = self._get_available_models()
+            if models:
+                self.model_monitor_name = models[0]
+        except Exception as e:
+            print("获取默认模型失败:", e)
+            pass
+
         self.init_ui()
 
         self.timer = QTimer(self)
@@ -301,6 +311,38 @@ class MonitorWidget(QWidget):
         self._drag_pos = None
 
     def init_ui(self):
+        from PySide6.QtGui import QFontDatabase, QFont
+
+        def make_smooth_font(preferred_families, point_size=10, weight=QFont.Medium):
+            # 使用类方法获取系统字体族，避免实例化 QFontDatabase()
+            try:
+                families = QFontDatabase.families()
+            except Exception:
+                families = []  # 兼容性回退
+
+            family = None
+            for f in preferred_families:
+                if f in families:
+                    family = f
+                    break
+            if family is None:
+                family = QFont().defaultFamily()
+            font = QFont(family, point_size, weight)
+            # 尝试启用抗锯齿的渲染策略（若可用）
+            try:
+                font.setStyleStrategy(QFont.PreferAntialias)
+            except Exception:
+                try:
+                    font.setStyleStrategy(QFont.PreferAntialiasing)
+                except Exception:
+                    pass
+            # 轻微增加字间距让显示更圆润（按需调整）
+            try:
+                font.setLetterSpacing(QFont.AbsoluteSpacing, 0.6)
+            except Exception:
+                pass
+            return font
+
         self.setFixedSize(260, 350)  # 预留足够高度
         self.main_container = QWidget(self)
         self.main_container.setObjectName("bg")
@@ -322,6 +364,12 @@ class MonitorWidget(QWidget):
         self.model_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.model_label.setFixedHeight(24)
         self.model_label.setStyleSheet("color: #FFD580; font-size: 11px;")
+
+        # 应用平滑字体：优先尝试常见的圆润/可变字体
+        preferred = ["Segoe UI Variable", "Inter", "Segoe UI", "Microsoft YaHei", "Arial"]
+        smooth_font = make_smooth_font(preferred, point_size=11, weight=QFont.DemiBold)
+        self.model_label.setFont(smooth_font)
+
         top_bar.addWidget(self.model_label)
 
         top_bar.addStretch()
@@ -350,6 +398,34 @@ class MonitorWidget(QWidget):
             self.widgets[key] = {'row': row_widget, 'lbl': lbl, 'chart': chart}
 
         self.apply_settings()
+
+    def update_cfg(self, key, field, state):
+        """从复选框回调更新 configs 并刷新显示"""
+        try:
+            self.configs[key][field] = (state == Qt.Checked)
+            self.apply_settings()
+        except Exception:
+            pass
+
+    def _get_available_models(self):
+        """返回 ollama list 的模型名列表，失败时返回空列表"""
+        if not shutil.which("ollama"):
+            return []
+        try:
+            out = subprocess.check_output(["ollama", "list"], text=True, stderr=subprocess.DEVNULL)
+            models = []
+            for line in out.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split()
+                name = parts[0]
+                if name.lower() in ("name", "---"):
+                    continue
+                models.append(name)
+            return models
+        except Exception:
+            return []
 
     def apply_settings(self):
         visible_count = 0
@@ -445,42 +521,38 @@ class MonitorWidget(QWidget):
                     self.model_label.setText(f"{model}：正在运行")
                     self.model_label.setStyleSheet("color: #7CFF9E; font-size: 11px;")
                 else:
-                    # 未运行，尝试按节流自动启动
+                    # 未运行，先更新状态文本
                     self.model_label.setText(f"{model}：未运行（自动启动中）")
                     self.model_label.setStyleSheet("color: #FFB3B3; font-size: 11px;")
-                    try:
-                        # 2. 根据平台设置不同的启动参数
-                        if sys.platform == "win32":
-                            # Windows 下：不显示窗口，脱离父进程组，防止 Python 关闭时它也跟着关
-                            # 使用 stdin=subprocess.PIPE 是关键，欺骗 ollama 有输入流
-                            process = subprocess.Popen(
-                                ["ollama", "run", model],
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                # env=env,
-                                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-                            )
-                        else:
-                            # Linux/Mac 下
-                            process = subprocess.Popen(
-                                ["ollama", "run", model],
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.DEVNULL,
-                                stderr=subprocess.DEVNULL,
-                                # env=env,
-                                start_new_session=True
-                            )
-
-                        print(f"✅ 已成功发起启动指令: {model}")
-                        return True
-                    except Exception as e:
-                        print(f"❌ 启动失败: {e}")
-                        return False
-                    else:
-                        # 无 ollama 可用，提示用户
-                        self.model_label.setText(f"{model}：未找到 ollama")
-                        self.model_label.setStyleSheet("color: #FFB3B3; font-size: 11px;")
+                    # 仅在超过冷却时间后尝试自动启动一次
+                    if (now - self._model_last_start_attempt) >= self._model_start_cooldown:
+                        self._model_last_start_attempt = now
+                        try:
+                            if not shutil.which("ollama"):
+                                self.model_label.setText(f"{model}：未找到 ollama")
+                                self.model_label.setStyleSheet("color: #FFB3B3; font-size: 11px;")
+                            else:
+                                if sys.platform == "win32":
+                                    detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                                    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | detached | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                                    process = subprocess.Popen(
+                                        ["ollama", "run", model],
+                                        stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL,
+                                        creationflags=creationflags
+                                    )
+                                else:
+                                    process = subprocess.Popen(
+                                        ["ollama", "run", model],
+                                        stdin=subprocess.PIPE,
+                                        stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL,
+                                        start_new_session=True
+                                    )
+                                print(f"✅ 已发起自动启动指令: {model}")
+                        except Exception as e:
+                            print(f"❌ 自动启动失败: {e}")
                 self.model_label.setVisible(True)
             else:
                 self.model_label.setVisible(False)
@@ -496,6 +568,7 @@ class MonitorWidget(QWidget):
     def mouseMoveEvent(self, event):
         if self._drag_pos and event.buttons() & Qt.LeftButton:
             self.move(event.globalPosition().toPoint() - self._drag_pos)
+
 
 
 
