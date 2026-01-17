@@ -1,5 +1,7 @@
 # python
 import sys
+from typing import Any
+
 import psutil
 import collections
 import subprocess
@@ -8,6 +10,8 @@ from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, QHBox
                                QPushButton, QDialog, QCheckBox, QScrollArea, QFrame, QComboBox)
 from PySide6.QtCore import Qt, QTimer, QPoint, QSize
 from PySide6.QtGui import QFont, QPainter, QColor, QPen, QAction
+import requests
+import json
 
 # 尝试初始化 NVML
 try:
@@ -53,6 +57,38 @@ class Sparkline(QWidget):
 # python
 
 # python
+def start_a_model(model: str | Any):
+    url = "http://127.0.0.1:11434/api/generate"
+    payload = {
+        "model": model,
+        "prompt": "",
+        "stream": False
+    }
+
+    # 关键：显式设置 proxies 为 None，彻底绕过系统代理，解决 502 报错
+    proxies = {
+        "http": None,
+        "https": None,
+    }
+
+    try:
+        print(f"正在启动模型 {model}，请稍候（显存加载中）...")
+        response = requests.post(url, json=payload, proxies=proxies, timeout=60)
+
+        if response.status_code == 200:
+            print("✅ 模型已成功加载到服务中！")
+            print("响应结果:", response.json())
+        else:
+            print(f"❌ 启动失败，状态码: {response.status_code}")
+            print("错误详情:", response.text)
+
+    except requests.exceptions.ConnectionError:
+        print("❌ 无法连接到 Ollama 服务，请确保已运行 'ollama serve'")
+    except Exception as e:
+        print(f"❌ 发生异常: {e}")
+    print(f"✅ 已发起自动启动指令: {model}")
+
+
 class SettingsDialog(QDialog):
     def __init__(self, parent, configs):
         super().__init__(parent)
@@ -162,25 +198,63 @@ class SettingsDialog(QDialog):
         except Exception:
             pass
 
+    # def refresh_models(self):
+    #     self.model_combo.clear()
+    #     if not shutil.which("ollama"):
+    #         print("未找到 ollama 命令，无法列出模型。")
+    #         return
+    #     try:
+    #         out = subprocess.check_output(["ollama", "list"], text=True, stderr=subprocess.DEVNULL)
+    #         for line in out.splitlines():
+    #             line = line.strip()
+    #             if not line:
+    #                 continue
+    #             parts = line.split()
+    #             name = parts[0]
+    #             if name.lower() in ("name", "---"):
+    #                 continue
+    #             if name not in [self.model_combo.itemText(i) for i in range(self.model_combo.count())]:
+    #                 self.model_combo.addItem(name)
+    #     except Exception as e:
+    #         print("获取 ollama 模型列表失败:", e)
+
     def refresh_models(self):
+        import requests
         self.model_combo.clear()
-        if not shutil.which("ollama"):
-            print("未找到 ollama 命令，无法列出模型。")
-            return
+
+        url = "http://127.0.0.1:11434/api/tags"
+        # 彻底禁用代理，防止请求被拦截导致 502
+        proxies = {"http": None, "https": None}
+
         try:
-            out = subprocess.check_output(["ollama", "list"], text=True, stderr=subprocess.DEVNULL)
-            for line in out.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                name = parts[0]
-                if name.lower() in ("name", "---"):
-                    continue
-                if name not in [self.model_combo.itemText(i) for i in range(self.model_combo.count())]:
-                    self.model_combo.addItem(name)
+            # 设置 3 秒超时，防止 Ollama 没启动时界面卡死
+            response = requests.get(url, proxies=proxies, timeout=3)
+
+            if response.status_code == 200:
+                data = response.json()
+                models = data.get('models', [])
+
+                if not models:
+                    print("Ollama 中尚未下载任何模型。")
+                    self.model_combo.addItem("无本地模型")
+                    return
+
+                # 获取当前下拉框中已有的所有模型，避免重复添加
+                existing_items = [self.model_combo.itemText(i) for i in range(self.model_combo.count())]
+
+                for model_info in models:
+                    name = model_info.get('name')
+                    if name and name not in existing_items:
+                        self.model_combo.addItem(name)
+
+                print(f"成功通过 API 刷新了 {len(models)} 个模型")
+            else:
+                print(f"API 响应错误，状态码: {response.status_code}")
+                self.model_combo.addItem("无法获取模型 (API 错误)")
+
         except Exception as e:
-            print("获取 ollama 模型列表失败:", e)
+            print(f"获取模型列表异常: {e}")
+            self.model_combo.addItem("无法连接到 Ollama 服务")
 
     # python
     def run_model(self):
@@ -195,66 +269,8 @@ class SettingsDialog(QDialog):
             print("未找到 `ollama` 命令，请确认 PATH（在 cmd 中运行 `where ollama`）")
             return
 
-        try:
-            # 启动子进程，保留 stdout/stderr 并以文本模式读取
-            creationflags = 0
-            if sys.platform == "win32":
-                # 尽量使用无窗口/新进程组标志
-                CREATE_NEW_PROCESS_GROUP = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200)
-                CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
-                DETACHED_PROCESS = 0x00000008
-                creationflags = CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW | DETACHED_PROCESS
-
-            proc = subprocess.Popen(
-                [ollama_path, "run", model],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                bufsize=1,
-                text=True,
-                creationflags=creationflags
-            )
-
-            # 后台线程逐行读取并打印到控制台
-            def _stream_output(pipe, pid):
-                try:
-                    print(f"ollama run 已启动，pid={pid}，开始转发输出：")
-                    for line in iter(pipe.readline, ""):
-                        if not line:
-                            break
-                        # 直接打印到运行控制台
-                        print(line.rstrip())
-                except Exception as e:
-                    print("读取子进程输出失败:", e)
-                finally:
-                    try:
-                        pipe.close()
-                    except Exception:
-                        pass
-                    print(f"ollama run pid={pid} 输出流已结束。")
-
-            t = threading.Thread(target=_stream_output, args=(proc.stdout, proc.pid), daemon=True)
-            t.start()
-
-            # 保存引用以防被 gc，方便后续检查或关闭
-            try:
-                self._ollama_proc = proc
-                self._output_thread = t
-            except Exception:
-                pass
-
-            print(f"已发出启动请求，pid={getattr(proc, 'pid', 'n/a')}")
-
-            # 立即把选择设为监控并生效（如有需要）
-            try:
-                self.parent_widget.model_monitor_name = model
-                self.parent_widget.model_monitor_enabled = True
-                self.parent_widget.apply_settings()
-                self.cb_monitor_model.setChecked(True)
-            except Exception:
-                pass
-
-        except Exception as e:
-            print("启动模型失败:", e)
+        # 在新线程中启动模型，避免阻塞 UI
+        start_a_model(model)
 
     def accept(self):
         try:
@@ -276,6 +292,54 @@ class SettingsDialog(QDialog):
 
 
 # python
+# def _is_model_running(model_name: str) -> bool:
+#     if not model_name:
+#         return False
+#     if not shutil.which("ollama"):
+#         return False
+#     try:
+#         out = subprocess.check_output(["ollama", "ps"], text=True, stderr=subprocess.DEVNULL)
+#         for line in out.splitlines():
+#             if model_name in line.split():
+#                 return True
+#         return False
+#     except Exception:
+#         return False
+
+def _is_model_running(model_name: str) -> bool:
+    import requests
+
+    if not model_name:
+        return False
+
+    url = "http://127.0.0.1:11434/api/ps"
+    # 强制不使用代理，直接连接本地 API
+    proxies = {"http": None, "https": None}
+
+    try:
+        # 设置较短的超时，避免 API 挂起时卡住 UI
+        response = requests.get(url, proxies=proxies, timeout=2)
+
+        if response.status_code == 200:
+            data = response.json()
+            running_models = data.get('models', [])
+
+            # 精确遍历运行中的模型列表
+            for model in running_models:
+                # 获取正在运行的模型全名（例如 'llama3:latest'）
+                active_name = model.get('name', '')
+
+                # 进行匹配：支持全名匹配或忽略 tag 的基本名匹配
+                if model_name == active_name or model_name == active_name.split(':')[0]:
+                    print(f"模型 {model_name} 正在运行。")
+                    return True
+
+        return False
+    except Exception as e:
+        # 如果 API 无法连接（Ollama 没开），默认认为模型没在运行
+        print(f"检查模型状态失败: {e}")
+        return False
+
 class MonitorWidget(QWidget):
     def __init__(self):
         super().__init__()
@@ -425,24 +489,48 @@ class MonitorWidget(QWidget):
          except Exception:
              pass
 
+        # def _get_available_models(self):
+        #     """返回 ollama list 的模型名列表，失败时返回空列表"""
+        #     if not shutil.which("ollama"):
+        #         return []
+        #     try:
+        #         out = subprocess.check_output(["ollama", "list"], text=True, stderr=subprocess.DEVNULL)
+        #         models = []
+        #         for line in out.splitlines():
+        #             line = line.strip()
+        #             if not line:
+        #                 continue
+        #             parts = line.split()
+        #             name = parts[0]
+        #             if name.lower() in ("name", "---"):
+        #                 continue
+        #             models.append(name)
+        #         return models
+        #     except Exception:
+        #         return []
+
     def _get_available_models(self):
-        """返回 ollama list 的模型名列表，失败时返回空列表"""
-        if not shutil.which("ollama"):
-            return []
+        """通过 API 获取已下载的模型名列表，失败时返回空列表"""
+        import requests
+
+        url = "http://127.0.0.1:11434/api/tags"
+        # 强制不使用代理，防止 502 错误
+        proxies = {"http": None, "https": None}
+
         try:
-            out = subprocess.check_output(["ollama", "list"], text=True, stderr=subprocess.DEVNULL)
-            models = []
-            for line in out.splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                parts = line.split()
-                name = parts[0]
-                if name.lower() in ("name", "---"):
-                    continue
-                models.append(name)
-            return models
-        except Exception:
+            # 设置较短的超时，避免阻塞主线程
+            response = requests.get(url, proxies=proxies, timeout=2)
+
+            if response.status_code == 200:
+                data = response.json()
+                # 从 JSON 中提取模型名称
+                # 结构示例: {"models": [{"name": "llama3:latest", ...}]}
+                return [model['name'] for model in data.get('models', [])]
+
+            return []
+        except Exception as e:
+            # 打印错误方便调试，生产环境可以去掉 print
+            print(f"API 获取模型列表失败: {e}")
             return []
 
     def apply_settings(self):
@@ -462,7 +550,7 @@ class MonitorWidget(QWidget):
         # 模型监控显示：仅当启用且有选择模型时显示，并立即尝试更新状态文本
         if getattr(self, "model_monitor_enabled", False) and getattr(self, "model_monitor_name", ""):
             try:
-                running = self._is_model_running(self.model_monitor_name)
+                running = _is_model_running(self.model_monitor_name)
                 if running:
                     self.model_label.setText(f"{self.model_monitor_name}：正在运行")
                     self.model_label.setStyleSheet("color: #7CFF9E; font-size: 11px;")
@@ -485,20 +573,6 @@ class MonitorWidget(QWidget):
             self.apply_settings()
         except Exception as e:
             print(f"弹出失败: {e}")
-
-    def _is_model_running(self, model_name: str) -> bool:
-        if not model_name:
-            return False
-        if not shutil.which("ollama"):
-            return False
-        try:
-            out = subprocess.check_output(["ollama", "ps"], text=True, stderr=subprocess.DEVNULL)
-            for line in out.splitlines():
-                if model_name in line.split():
-                    return True
-            return False
-        except Exception:
-            return False
 
     def update_stats(self):
         import time
@@ -533,7 +607,7 @@ class MonitorWidget(QWidget):
         try:
             if getattr(self, "model_monitor_enabled", False) and getattr(self, "model_monitor_name", ""):
                 model = self.model_monitor_name
-                running = self._is_model_running(model)
+                running = _is_model_running(model)
                 now = time.time()
                 if running:
                     self.model_label.setText(f"{model}：正在运行")
@@ -550,25 +624,7 @@ class MonitorWidget(QWidget):
                                 self.model_label.setText(f"{model}：未找到 ollama")
                                 self.model_label.setStyleSheet("color: #FFB3B3; font-size: 11px;")
                             else:
-                                if sys.platform == "win32":
-                                    detached = getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
-                                    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0) | detached | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                                    process = subprocess.Popen(
-                                        ["ollama", "run", model],
-                                        stdin=subprocess.PIPE,
-                                        stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL,
-                                        creationflags=creationflags
-                                    )
-                                else:
-                                    process = subprocess.Popen(
-                                        ["ollama", "run", model],
-                                        stdin=subprocess.PIPE,
-                                        stdout=subprocess.DEVNULL,
-                                        stderr=subprocess.DEVNULL,
-                                        start_new_session=True
-                                    )
-                                print(f"✅ 已发起自动启动指令: {model}")
+                                start_a_model(model)
                         except Exception as e:
                             print(f"❌ 自动启动失败: {e}")
                 self.model_label.setVisible(True)
