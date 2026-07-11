@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+.venv/
+venv/
+
+# IDE
+.idea/
+
+# Claude
+.claude/
+
+# ML Models (too large)
+models/
+
+# Output files (build artifacts, debug images, dist)
+outputs/build/
+outputs/dist/
+outputs/debug_images/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# OS
+.DS_Store
+Thumbs.db
