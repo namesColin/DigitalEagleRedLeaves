@@ -1,4 +1,4 @@
-from config import Config
+from .config import Config
 # 这是红叶的“前额叶”，负责加工记忆并生成带有情感色彩的语言。
 class HongYePersonality:
     def __init__(self, brain_engine):

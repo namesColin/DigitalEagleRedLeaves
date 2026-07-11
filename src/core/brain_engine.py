@@ -4,7 +4,7 @@ from graphiti_core.llm_client.config import LLMConfig
 from graphiti_core.llm_client.openai_generic_client import OpenAIGenericClient
 from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
 from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
-from config import Config
+from .config import Config
 from scipy.spatial.distance import cosine # 需要安装 scipy，或手动写余弦相似度计算
 
 #负责与 Neo4j 和 Graphiti 内核交互，这是红叶的“海马体”。

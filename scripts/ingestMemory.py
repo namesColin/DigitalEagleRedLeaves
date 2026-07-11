@@ -74,8 +74,10 @@
 import asyncio
 import os
 import sys
-from brain_engine import HongYeBrain
-from config import Config
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from core.brain_engine import HongYeBrain
+from core.config import Config
 
 
 async def ingest_from_file():
@@ -84,7 +86,7 @@ async def ingest_from_file():
 
     # 2. 选择文件
     # file_path = input("请输入要导入的记忆文档路径 (例如 memories.txt): ").strip()
-    file_path = "temp.txt"  # 默认文件名，方便测试
+    file_path = os.path.join(os.path.dirname(__file__), "..", "data", "memories", "temp.txt")  # 默认记忆文件
 
     if not os.path.exists(file_path):
         print(f"❌ 错误：找不到文件 '{file_path}'，请检查路径。")

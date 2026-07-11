@@ -1,8 +1,11 @@
 import asyncio
 import os
-from config import Config
-from brain_engine import HongYeBrain
-from personality import HongYePersonality
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+
+from core.config import Config
+from core.brain_engine import HongYeBrain
+from core.personality import HongYePersonality
 
 
 async def main():

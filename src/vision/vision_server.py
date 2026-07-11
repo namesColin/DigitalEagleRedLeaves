@@ -1,7 +1,7 @@
 import io
 from fastapi import FastAPI, UploadFile, File
 from PIL import Image
-from vision_model import VisionModule
+from .vision_model import VisionModule
 import uvicorn
 
 app = FastAPI()
