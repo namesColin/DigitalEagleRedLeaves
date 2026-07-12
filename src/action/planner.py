@@ -64,9 +64,12 @@ async def execute_step(step: dict, vision_module, matcher, llm_client,
     return True
 
 
-async def run(intent: str, text: str, vision_module, llm_client) -> dict:
-    """完整执行: 规划→逐步执行→返回结果。"""
+async def run(intent: str, text: str, llm_client) -> dict:
+    """完整执行: 规划→逐步执行→返回结果。视觉模块自动加载。"""
+    from ..vision.vision_model_v2 import VisionModuleV2
     from .matcher import find_element
+
+    vision_module = VisionModuleV2()
 
     steps = await plan(intent, llm_client)
     print(f"📋 {len(steps)} 步: {[s['goal'][:40] for s in steps]}")
