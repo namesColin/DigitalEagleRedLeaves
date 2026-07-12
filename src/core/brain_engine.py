@@ -285,8 +285,9 @@ class HongYeBrain:
                     f"{json.dumps(schema, ensure_ascii=False)}\n"
                     f"Do NOT wrap in markdown code blocks. Output ONLY the JSON object."
                 )
-                messages[-1].content += schema_hint
-            else:
+                if messages:
+                    messages[-1].content += schema_hint
+            elif messages:
                 messages[-1].content += "\nRespond in JSON format. Output ONLY the JSON object."
 
             return await _original(messages, None, max_tokens, model_size)
