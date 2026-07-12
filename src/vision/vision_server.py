@@ -5,14 +5,22 @@ from fastapi import FastAPI, UploadFile, File
 from PIL import Image
 import uvicorn
 
-# 兼容直接运行和模块运行
+MODEL_VERSION = "v2"  # "v1" = Florence-2-large, "v2" = OmniParser YOLO + Florence-2-large
+
 if __name__ == "__main__" and __package__ is None:
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from vision.vision_model import VisionModule
+    if MODEL_VERSION == "v2":
+        from vision.vision_model_v2 import VisionModuleV2 as VisionModule
+    else:
+        from vision.vision_model import VisionModule
 else:
-    from .vision_model import VisionModule
+    if MODEL_VERSION == "v2":
+        from .vision_model_v2 import VisionModuleV2 as VisionModule
+    else:
+        from .vision_model import VisionModule
 
 app = FastAPI()
+print(f"[server] 模型版本: {MODEL_VERSION}")
 vision = VisionModule()
 
 @app.post("/analyze")

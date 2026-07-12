@@ -162,27 +162,35 @@ def get_visual_debug(prompt="<OCR_WITH_REGION>"):
         font = ImageFont.load_default()
 
     all_data = data.get('data', {})
-    results = all_data.get(prompt, [])
 
-    if not results:
-        print("⚠️ 视觉模块未返回坐标。")
-        return
-
-    labels = results.get('labels', [])
-    boxes = results.get('quad_boxes') or results.get('bboxes')
+    # V2 格式: {"boxes": [...], "labels": [...]}，V1: {prompt: {"bboxes": [...]}}
+    is_v2 = "boxes" in all_data
+    if is_v2:
+        labels = all_data.get("labels", [])
+        boxes = all_data.get("boxes", [])
+        print(f"模式: V2 (OmniParser), {len(boxes)} 直接检测框")
+    else:
+        results = all_data.get(prompt, {})
+        labels = results.get('labels', [])
+        boxes = results.get('quad_boxes') or results.get('bboxes')
+        print(f"模式: V1 (Florence-2), {len(boxes)} 结果")
 
     if not boxes:
         print("⚠️ 未找到有效盒子。")
         return
 
-    # 合并高度重叠的重复框（IoU > 0.5 视为同一目标）
+    # 合并重叠框
     def merge_overlaps(labels, boxes):
         def to_rect(b):
             if len(b) == 8:
-                xs, ys = [b[i] for i in range(0, 8, 2)], [b[i + 1] for i in range(0, 8, 2)]
+                xs = [b[i] for i in range(0, 8, 2)]
+                ys = [b[i + 1] for i in range(0, 8, 2)]
                 return min(xs), min(ys), max(xs), max(ys)
             elif len(b) == 4:
-                return b[1], b[0], b[3], b[2]  # [y1,x1,y2,x2] → left,top,right,bottom
+                if is_v2:
+                    return b[0], b[1], b[2], b[3]  # V2: [x1,y1,x2,y2]
+                else:
+                    return b[1], b[0], b[3], b[2]  # V1: [y1,x1,y2,x2]
             return b[0], b[1], b[2], b[3]
 
         def iou(a, b):

@@ -31,25 +31,27 @@ for prompt in PROMPTS:
     )
     elapsed = round(time.time() - t0, 2)
     data = resp.json()
-    task_data = data.get("data", {}).get(prompt, {})
-    # caption 返回的是纯字符串，不是 dict
-    if isinstance(task_data, str):
-        results["tests"].append({"prompt": prompt, "elapsed_sec": elapsed, "caption": task_data})
-        print(f"{elapsed}s, caption={task_data[:50]}...")
+    task_data = data.get("data", {}).get(prompt, {}) or data.get("data", {})
+    # V2 caption: {"caption": "...", "format": "text"}
+    if isinstance(task_data, dict) and "caption" in task_data:
+        results["tests"].append({"prompt": prompt, "elapsed_sec": elapsed,
+                                 "caption": task_data["caption"]})
+        print(f"{elapsed}s, caption={task_data['caption'][:50]}...")
         continue
-    boxes = task_data.get("bboxes") or task_data.get("quad_boxes") if isinstance(task_data, dict) else None
+    # V2: {"boxes": [...], "labels": [...], "format": "xyxy_pixel"}
+    if isinstance(task_data, dict) and "boxes" in task_data:
+        boxes = task_data["boxes"]
+    else:
+        boxes = task_data.get("bboxes") or task_data.get("quad_boxes") if isinstance(task_data, dict) else None
     test = {
-        "prompt": prompt,
-        "elapsed_sec": elapsed,
+        "prompt": prompt, "elapsed_sec": elapsed,
         "box_count": len(boxes) if boxes else 0,
         "raw_result": data.get("data", {}),
     }
     if boxes and len(boxes) > 0:
         test["box_dims"] = len(boxes[0])
-        test["samples"] = [
-            {"label": lbl, "box": b}
-            for lbl, b in zip(task_data.get("labels", []), boxes[:3])
-        ]
+        labels = task_data.get("labels", [])
+        test["samples"] = [{"label": lbl, "box": b} for lbl, b in zip(labels, boxes[:5])]
     results["tests"].append(test)
     print(f"{elapsed}s, {test['box_count']} 个目标")
 
