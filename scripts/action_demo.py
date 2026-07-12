@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
 
 from core.config import Config
 from core.brain_engine import HongYeBrain
+from vision.vision_model_v2 import VisionModuleV2
 from action.planner import run as action_run
 
 
@@ -17,9 +18,12 @@ async def main():
     Config.setup_env()
 
     print("=== 红叶 · 操作模块演示 ===\n")
-    print("初始化大脑 + 视觉 ...")
+    print("初始化大脑 ...")
     brain = HongYeBrain()
     await brain.initialize()
+
+    print("加载视觉模块 ...")
+    vision = VisionModuleV2()
 
     print("✅ 就绪\n")
     intention = input("指令（如: 打开浏览器搜索XX）: ").strip()
@@ -28,7 +32,8 @@ async def main():
         intention = "在任务栏找到并点击文件管理器图标"
 
     print()
-    result = await action_run(intent=intention, text="", llm_client=brain.chat_llm_client)
+    result = await action_run(intent=intention, text="", vision_module=vision,
+                              llm_client=brain.chat_llm_client)
 
     print(f"\n{'✅ 完成' if result['success'] else '⚠ 部分完成'} "
           f"({result['steps_done']}/{result['total_steps']} 步)")

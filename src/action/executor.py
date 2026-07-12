@@ -29,7 +29,10 @@ def click_at(x: int, y: int):
 
 
 def type_text(text: str, interval: float = 0.05):
-    pyautogui.write(text, interval=interval)
+    """通过剪贴板粘贴输入文字，绕过一切输入法问题（中英文均可）。"""
+    import pyperclip
+    pyperclip.copy(text)
+    pyautogui.hotkey("ctrl", "v")
 
 
 def press(key: str):
