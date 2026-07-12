@@ -102,6 +102,70 @@ class HongYeBrain:
         facts = list(set([res.fact for res in results if hasattr(res, 'fact')]))
         return facts
 
+    # ===== 图联想检索（Cypher BFS，替代 Graphiti search）=====
+
+    async def search_memory_graph(self, query: str, bfs_depth: int = 2,
+                                   perturbation: float = 0.0, limit: int = 20) -> list[dict]:
+        """
+        图联想检索：向量/文本定位核心节点 → BFS 邻接扩散。
+        返回带距离的记忆列表，每个元素为 {"memory": str, "distance": int}。
+        distance=0 表示核心节点本身，1=直接关联，2=间接联想...
+        perturbation=0.0~1.0 控制随机扰动比例（0=不扰动）。
+        """
+        # 1. 定位核心 Entity 节点
+        nodes = await self._find_entity_nodes(query, limit=3)
+        if not nodes:
+            return []
+
+        # 2. 收集核心节点
+        results = [(name, summary, 0) for name, summary in nodes]
+        seen_names = {n[0] for n in nodes}
+
+        # 3. BFS 邻接扩散
+        node_names = [n[0] for n in nodes]
+        neighbors = await self._bfs_from_nodes(node_names, bfs_depth, perturbation, limit)
+        for name, summary, dist in neighbors:
+            if name not in seen_names:
+                seen_names.add(name)
+                results.append((name, summary, dist))
+
+        # 4. 按距离排序，返回
+        results.sort(key=lambda x: x[2])
+        return [{"memory": summary or name, "distance": dist}
+                for name, summary, dist in results[:limit]]
+
+    async def _find_entity_nodes(self, query: str, limit: int = 5):
+        """Cypher 文本搜索定位 Entity 节点。"""
+        records, _, _ = await self.graphiti.driver.execute_query(
+            "MATCH (e:Entity) "
+            "WHERE e.name CONTAINS $query OR e.summary CONTAINS $query "
+            "RETURN e.name AS name, e.summary AS summary "
+            "LIMIT $limit",
+            query=query, limit=limit,
+            database_="neo4j",
+        )
+        return [(r["name"], r["summary"]) for r in records]
+
+    async def _bfs_from_nodes(self, node_names: list[str], depth: int,
+                               perturbation: float, limit: int):
+        """从核心节点 BFS 邻接扩散，返回 [(name, summary, distance), ...]."""
+        all_neighbors = []
+        for name in node_names:
+            order = ("distance" if perturbation == 0
+                     else f"CASE WHEN rand() < {perturbation} THEN rand() ELSE distance END")
+            records, _, _ = await self.graphiti.driver.execute_query(
+                f"MATCH path = (core:Entity {{name: $name}})-[*1..{depth}]-(neighbor:Entity) "
+                f"RETURN DISTINCT neighbor.name AS name, neighbor.summary AS summary, "
+                f"length(path) AS distance "
+                f"ORDER BY {order} "
+                f"LIMIT $limit",
+                name=name, limit=limit,
+                database_="neo4j",
+            )
+            for r in records:
+                all_neighbors.append((r["name"], r["summary"], r["distance"]))
+        return all_neighbors
+
     async def check_semantic_exists(self, new_content: str, threshold: float = 0.85, existing_facts: list[str] = None):
         '''检查语义重复，支持传入已检索的 facts 避免重复 search_memory。'''
         if existing_facts is None:

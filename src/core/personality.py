@@ -40,9 +40,16 @@ class HongYePersonality:
         :param question: 用户提问字符串
         :return: LLM 流式回答生成器
         """
-        # 1. 检索记忆
-        facts = await self.brain.search_memory(question)
-        context = "\n".join([f"- {f}" for f in facts]) if facts else "（暂无相关记忆）"
+        # 1. 图联想检索（核心节点 → BFS 邻接扩散，含轻微扰动）
+        memories = await self.brain.search_memory_graph(question, bfs_depth=2, perturbation=0.1)
+        if memories:
+            lines = []
+            for m in memories:
+                tag = "核心" if m["distance"] == 0 else f"联想(距离{m['distance']})"
+                lines.append(f"[{tag}] {m['memory']}")
+            context = "\n".join(lines)
+        else:
+            context = "（暂无相关记忆）"
 
         # 2. 构造 Prompt
         prompt = self._build_prompt(context, question)
