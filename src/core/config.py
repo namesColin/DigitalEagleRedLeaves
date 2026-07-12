@@ -2,16 +2,21 @@ import os
 
 class Config:
     # ====================================================================
-    # 切换 LLM 后端：只改这里
-    #   "deepseek" → DeepSeek API（云端）
-    #   "ollama"   → 本地 Ollama
+    # 对话 LLM — 切换 DeepSeek / Ollama
     # ====================================================================
     LLM_BACKEND = "deepseek"
 
+    # ====================================================================
+    # Graphiti 内部 LLM（实体提取、记忆搜索）— 独立切换
+    # DeepSeek 支持 response_format(json_object) 但可能有兼容问题
+    # 如遇 400 错误，切回 "ollama"
+    # ====================================================================
+    GRAPHITI_LLM_BACKEND = "deepseek"
+
     # DeepSeek API 预设
     DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-    DEEPSEEK_API_KEY = "sk-300e118594544603a1f16f9716e508a9"  # 替换为你的 key
-    DEEPSEEK_MODEL = "deepseek-v4-pro"               # deepseek-chat 或 deepseek-reasoner
+    DEEPSEEK_API_KEY = "sk-300e118594544603a1f16f9716e508a9"
+    DEEPSEEK_MODEL = "deepseek-v4-pro"
 
     # 本地 Ollama 预设
     OLLAMA_BASE_URL = "http://localhost:11434/v1"
@@ -32,19 +37,43 @@ class Config:
     RERANK_API_KEY = "ollama"
     RERANK_MODEL = "qllama/bge-reranker-v2-m3:latest"
 
-    # ===== 解析方法（brain_engine 调用，根据 LLM_BACKEND 自动选择）=====
+    # ===== 解析方法 — 对话 LLM =====
+
+    @classmethod
+    def _pick(cls, backend):
+        return cls.DEEPSEEK_BASE_URL if backend == "deepseek" else cls.OLLAMA_BASE_URL
+
+    @classmethod
+    def _pick_key(cls, backend):
+        return cls.DEEPSEEK_API_KEY if backend == "deepseek" else cls.OLLAMA_API_KEY
+
+    @classmethod
+    def _pick_model(cls, backend):
+        return cls.DEEPSEEK_MODEL if backend == "deepseek" else cls.OLLAMA_MODEL
 
     @classmethod
     def resolve_base_url(cls):
-        return cls.DEEPSEEK_BASE_URL if cls.LLM_BACKEND == "deepseek" else cls.OLLAMA_BASE_URL
+        return cls._pick(cls.LLM_BACKEND)
 
     @classmethod
     def resolve_api_key(cls):
-        return cls.DEEPSEEK_API_KEY if cls.LLM_BACKEND == "deepseek" else cls.OLLAMA_API_KEY
+        return cls._pick_key(cls.LLM_BACKEND)
 
     @classmethod
     def resolve_model(cls):
-        return cls.DEEPSEEK_MODEL if cls.LLM_BACKEND == "deepseek" else cls.OLLAMA_MODEL
+        return cls._pick_model(cls.LLM_BACKEND)
+
+    @classmethod
+    def resolve_graphiti_base_url(cls):
+        return cls._pick(cls.GRAPHITI_LLM_BACKEND)
+
+    @classmethod
+    def resolve_graphiti_api_key(cls):
+        return cls._pick_key(cls.GRAPHITI_LLM_BACKEND)
+
+    @classmethod
+    def resolve_graphiti_model(cls):
+        return cls._pick_model(cls.GRAPHITI_LLM_BACKEND)
 
     # ===== 环境变量 =====
 

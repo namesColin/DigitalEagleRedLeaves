@@ -60,7 +60,7 @@ async def seed():
         # 4. 存入记忆
         if answer:
             try:
-                is_dup = await brain.check_semantic_exists(answer, threshold=0.9)
+                is_dup = await brain.check_semantic_exists(answer, threshold=0.9, existing_facts=facts)
                 if not is_dup:
                     await brain.add_memory(content=answer, source="Main-Brain")
                     question_count += 1

@@ -14,21 +14,26 @@ class HongYeBrain:
         self.embedder = None
         self.config = Config()
         self.graphiti = None
+        self._embed_cache = {}  # {text: vector} 避免重复 embedding
 
     async def initialize(self):
         """
         初始化 Graphiti 大脑引擎，配置 LLM、Embedding 和 Reranker。
         :return: None
         """
-        # Graphiti 内部 LLM — 始终用 Ollama（entity extraction 需要 response_format）
+        # Graphiti 内部 LLM — 根据 GRAPHITI_LLM_BACKEND 切换
         graphiti_llm_config = LLMConfig(
-            base_url=self.config.OLLAMA_BASE_URL,
-            api_key=self.config.OLLAMA_API_KEY,
-            model=self.config.OLLAMA_MODEL
+            base_url=Config.resolve_graphiti_base_url(),
+            api_key=Config.resolve_graphiti_api_key(),
+            model=Config.resolve_graphiti_model()
         )
         graphiti_llm_client = OpenAIGenericClient(config=graphiti_llm_config)
 
-        # 对话 LLM — 根据 Config.LLM_BACKEND 切换 DeepSeek / Ollama
+        # DeepSeek 不支持 json_schema，降级为 json_object
+        if Config.GRAPHITI_LLM_BACKEND == "deepseek":
+            self._patch_graphiti_for_deepseek(graphiti_llm_client)
+
+        # 对话 LLM — 根据 LLM_BACKEND 切换
         chat_llm_config = LLMConfig(
             base_url=Config.resolve_base_url(),
             api_key=Config.resolve_api_key(),
@@ -97,87 +102,17 @@ class HongYeBrain:
         facts = list(set([res.fact for res in results if hasattr(res, 'fact')]))
         return facts
 
-    # python
-    async def check_semantic_exists(self, new_content: str, threshold: float = 0.85):
-        '''
-        `检查语义重复`：判断新内容在记忆中是否存在相似语义的片段。
-        通过计算新内容与现有记忆片段的向量相似度，如果相似度超过阈值则认为存在重复。
-        适用于避免存入语义重复的记忆片段。
-        该方法依赖于 embedder 获取文本向量表示。
-        目前实现了余弦相似度计算。
-        :param new_content:  要检查的新的记忆内容
-        :param threshold:  相似度阈值，默认 0.85
-        :return:  True 如果存在相似记忆，False 否则
-        说明：该方法会先检索现有记忆片段，然后计算新内容与每个记忆片段的相似度。
-        如果任一记忆片段的相似度超过阈值，则返回 True，表示存在语义重复。
-        该方法适用于在添加新记忆前进行语义去重检查。
-        需要注意的是，该方法可能会消耗较多的 Embedding 调用，
-        因为需要为新内容和每个现有记忆片段计算向量表示。
-        适用于记忆库规模较小或中等的场景。
-        '''
-        existing_facts = await self.search_memory(new_content)
+    async def check_semantic_exists(self, new_content: str, threshold: float = 0.85, existing_facts: list[str] = None):
+        '''检查语义重复，支持传入已检索的 facts 避免重复 search_memory。'''
+        if existing_facts is None:
+            existing_facts = await self.search_memory(new_content)
         if not existing_facts:
             return False
 
         import math
-        import asyncio
-
-        def to_list(vec):
-            # 转换 numpy 等类型到列表
-            try:
-                return list(vec)
-            except Exception:
-                return vec
-
-        async def get_embedding(text: str):
-            # 方案 A：常见方法名 embed_documents
-            if hasattr(self.embedder, "embed_documents"):
-                res = await self.embedder.embed_documents([text])
-                return to_list(res[0])
-
-            # 方案 B：批量 create_batch
-            if hasattr(self.embedder, "create_batch"):
-                res = await self.embedder.create_batch([text])
-                return to_list(res[0])
-
-            # 方案 C：单条 create（有些实现接受 str 或 list）
-            if hasattr(self.embedder, "create"):
-                create_fn = self.embedder.create
-                if asyncio.iscoroutinefunction(create_fn):
-                    res = await create_fn(text)
-                else:
-                    # 兼容同步实现
-                    res = create_fn(text)
-                # 可能返回单个向量或包含向量的列表
-                if isinstance(res, list) and res and isinstance(res[0], (list, tuple)):
-                    return to_list(res[0])
-                return to_list(res)
-
-            # 方案 D：直接使用内部 client.embeddings.create（例如 openai 客户端）
-            if hasattr(self.embedder, "client") and hasattr(self.embedder.client, "embeddings"):
-                client = self.embedder.client
-                # 支持 AsyncOpenAI 风格
-                try:
-                    res = await client.embeddings.create(input=[text],
-                                                         model=getattr(self.embedder, "config", None) and getattr(
-                                                             self.embedder.config, "embedding_model", None))
-                    return to_list(res.data[0].embedding)
-                except TypeError:
-                    # 有些实现可能接受单字符串
-                    res = await client.embeddings.create(input=text,
-                                                         model=getattr(self.embedder, "config", None) and getattr(
-                                                             self.embedder.config, "embedding_model", None))
-                    return to_list(res.data[0].embedding)
-                except Exception:
-                    pass
-
-            # 都失败则抛出
-            raise AttributeError(
-                "embedder 没有已知的 embedding 接口 (尝试过: embed_documents, create_batch, create, client.embeddings.create)")
 
         def cosine_sim(a, b):
-            a = list(a)
-            b = list(b)
+            a, b = list(a), list(b)
             dot = sum(x * y for x, y in zip(a, b))
             na = math.sqrt(sum(x * x for x in a))
             nb = math.sqrt(sum(y * y for y in b))
@@ -185,26 +120,114 @@ class HongYeBrain:
                 return 0.0
             return dot / (na * nb)
 
-        try:
-            new_vec = await get_embedding(new_content)
-        except Exception as e:
-            print(f"DEBUG: 无法获取新文本向量: {e}")
-            return False
+        # 批量 embedding：new_content + 所有已有记忆，一次请求并行计算
+        all_texts = [new_content] + existing_facts
+        all_vecs = await self._batch_embed(all_texts)
+        new_vec, fact_vecs = all_vecs[0], all_vecs[1:]
 
-        for fact in existing_facts:
-            try:
-                fact_vec = await get_embedding(fact)
-            except Exception as e:
-                # 如果某条记忆无法获得向量，跳过它
-                print(f"DEBUG: 无法获取记忆向量，跳过: {e}")
-                continue
-
+        for fact, fact_vec in zip(existing_facts, fact_vecs):
             similarity = cosine_sim(new_vec, fact_vec)
             if similarity > threshold:
                 print(f"[记忆去重] 发现相似记忆: '{fact}' (相似度: {similarity:.2f})，跳过存入。")
                 return True
 
         return False
+
+    async def _batch_embed(self, texts: list[str]) -> list:
+        '''批量 embedding，带缓存，避免重复计算。'''
+        import asyncio
+
+        results = [None] * len(texts)
+        uncached_texts, uncached_indices = [], []
+
+        for i, text in enumerate(texts):
+            if text in self._embed_cache:
+                results[i] = self._embed_cache[text]
+            else:
+                uncached_texts.append(text)
+                uncached_indices.append(i)
+
+        if not uncached_texts:
+            return results
+
+        # 批量调用（embed_documents 和 client.embeddings.create 都支持列表）
+        batch_vecs = await self._do_embed_batch(uncached_texts)
+
+        for idx, vec in zip(uncached_indices, batch_vecs):
+            results[idx] = vec
+            self._embed_cache[uncached_texts[idx]] = vec
+
+        return results
+
+    async def _do_embed_batch(self, texts: list[str]):
+        '''批量调用 embedder，兼容多种接口。'''
+        import asyncio
+
+        def to_list(vec):
+            try:
+                return list(vec)
+            except Exception:
+                return vec
+
+        # 方案 A：embed_documents（支持列表）
+        if hasattr(self.embedder, "embed_documents"):
+            res = await self.embedder.embed_documents(texts)
+            return [to_list(v) for v in res]
+
+        # 方案 B：create_batch
+        if hasattr(self.embedder, "create_batch"):
+            res = await self.embedder.create_batch(texts)
+            return [to_list(v) for v in res]
+
+        # 方案 C：client.embeddings.create（OpenAI 风格）
+        if hasattr(self.embedder, "client") and hasattr(self.embedder.client, "embeddings"):
+            client = self.embedder.client
+            model = getattr(getattr(self.embedder, "config", None), "embedding_model", None)
+            res = await client.embeddings.create(input=texts, model=model)
+            return [to_list(d.embedding) for d in res.data]
+
+        # 兜底：逐条调用 create
+        if hasattr(self.embedder, "create"):
+            results = []
+            for t in texts:
+                fn = self.embedder.create
+                if asyncio.iscoroutinefunction(fn):
+                    r = await fn(t)
+                else:
+                    r = fn(t)
+                if isinstance(r, list) and r and isinstance(r[0], (list, tuple)):
+                    results.append(to_list(r[0]))
+                else:
+                    results.append(to_list(r))
+            return results
+
+        raise AttributeError("embedder 无已知批量接口")
+
+    @staticmethod
+    def _patch_graphiti_for_deepseek(client):
+        """DeepSeek 不支持 json_schema，降级为 json_object + 将 schema 注入 prompt。"""
+        import json
+        import types
+        from graphiti_core.llm_client.config import DEFAULT_MAX_TOKENS
+        from graphiti_core.llm_client.config import ModelSize
+
+        _original = client._generate_response
+
+        async def _patched(self, messages, response_model=None, max_tokens=DEFAULT_MAX_TOKENS, model_size=ModelSize.medium):
+            if response_model is not None:
+                schema = response_model.model_json_schema()
+                schema_hint = (
+                    f"\nYou MUST respond in valid JSON format matching this schema exactly:\n"
+                    f"{json.dumps(schema, ensure_ascii=False)}\n"
+                    f"Do NOT wrap in markdown code blocks. Output ONLY the JSON object."
+                )
+                messages[-1].content += schema_hint
+            else:
+                messages[-1].content += "\nRespond in JSON format. Output ONLY the JSON object."
+
+            return await _original(messages, None, max_tokens, model_size)
+
+        client._generate_response = types.MethodType(_patched, client)
 
     async def close(self):
         """
