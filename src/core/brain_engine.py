@@ -20,24 +20,30 @@ class HongYeBrain:
         初始化 Graphiti 大脑引擎，配置 LLM、Embedding 和 Reranker。
         :return: None
         """
-        # 配置 LLM
-        llm_config = LLMConfig(base_url=self.config.BASE_URL, api_key=self.config.API_KEY, model=self.config.LLM_MODEL)
+        # 配置 LLM — 根据 Config.LLM_BACKEND 自动选择 DeepSeek 或 Ollama
+        llm_config = LLMConfig(
+            base_url=Config.resolve_base_url(),
+            api_key=Config.resolve_api_key(),
+            model=Config.resolve_model()
+        )
         llm_client = OpenAIGenericClient(config=llm_config)
 
-        # 配置 Embedding
+        # 配置 Embedding — 始终本地 Ollama
         embed_config = OpenAIEmbedderConfig(
-            base_url=self.config.BASE_URL,
-            api_key=self.config.API_KEY,
+            base_url=self.config.EMBED_BASE_URL,
+            api_key=self.config.EMBED_API_KEY,
             embedding_model=self.config.EMBED_MODEL,
             embedding_dim=self.config.EMBED_DIM
         )
         embedder = OpenAIEmbedder(config=embed_config)
         self.embedder = OpenAIEmbedder(config=embed_config)
 
-        # 配置 Reranker
-        rerank_config = LLMConfig(base_url=self.config.BASE_URL,
-                                  api_key=self.config.API_KEY,
-                                  model=self.config.RERANK_MODEL)
+        # 配置 Reranker — 始终本地 Ollama
+        rerank_config = LLMConfig(
+            base_url=self.config.RERANK_BASE_URL,
+            api_key=self.config.RERANK_API_KEY,
+            model=self.config.RERANK_MODEL
+        )
         rerank_config.cross_encoder_model = rerank_config.model
         reranker = OpenAIRerankerClient(config=rerank_config)
         self.reranker = OpenAIRerankerClient(config=rerank_config)
