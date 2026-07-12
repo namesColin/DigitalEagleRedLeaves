@@ -48,7 +48,7 @@ class HongYePersonality:
         prompt = self._build_prompt(context, question)
 
         # 3. 流式生成回复
-        response = await self.brain.llm_client.client.chat.completions.create(
+        response = await self.brain.chat_llm_client.client.chat.completions.create(
             model=Config.resolve_model(),
             messages=[{"role": "user", "content": prompt}],
             stream=True,

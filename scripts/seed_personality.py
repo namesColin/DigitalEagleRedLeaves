@@ -41,7 +41,7 @@ async def seed():
 
         # 2. DeepSeek 生成下一个问题
         prompt = INTERVIEW_PROMPT.format(memories=memories_text)
-        response = await brain.llm_client.client.chat.completions.create(
+        response = await brain.chat_llm_client.client.chat.completions.create(
             model=Config.resolve_model(),
             messages=[{"role": "user", "content": prompt}],
             stream=False,

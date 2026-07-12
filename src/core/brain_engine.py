@@ -20,13 +20,21 @@ class HongYeBrain:
         初始化 Graphiti 大脑引擎，配置 LLM、Embedding 和 Reranker。
         :return: None
         """
-        # 配置 LLM — 根据 Config.LLM_BACKEND 自动选择 DeepSeek 或 Ollama
-        llm_config = LLMConfig(
+        # Graphiti 内部 LLM — 始终用 Ollama（entity extraction 需要 response_format）
+        graphiti_llm_config = LLMConfig(
+            base_url=self.config.OLLAMA_BASE_URL,
+            api_key=self.config.OLLAMA_API_KEY,
+            model=self.config.OLLAMA_MODEL
+        )
+        graphiti_llm_client = OpenAIGenericClient(config=graphiti_llm_config)
+
+        # 对话 LLM — 根据 Config.LLM_BACKEND 切换 DeepSeek / Ollama
+        chat_llm_config = LLMConfig(
             base_url=Config.resolve_base_url(),
             api_key=Config.resolve_api_key(),
             model=Config.resolve_model()
         )
-        llm_client = OpenAIGenericClient(config=llm_config)
+        chat_llm_client = OpenAIGenericClient(config=chat_llm_config)
 
         # 配置 Embedding — 始终本地 Ollama
         embed_config = OpenAIEmbedderConfig(
@@ -52,12 +60,12 @@ class HongYeBrain:
             uri=self.config.NEO4J_URI,
             user=self.config.NEO4J_USER,
             password=self.config.NEO4J_PWD,
-            llm_client=llm_client,
+            llm_client=graphiti_llm_client,
             embedder=embedder,
             cross_encoder=reranker
         )
         self.graphiti.driver.database = "neo4j"
-        self.llm_client = llm_client # 留给 RAG 使用
+        self.chat_llm_client = chat_llm_client  # 对话 LLM（RAG / 提问用）
 
     async def add_memory(self, content: str, source: str = "observation"):
         """
