@@ -175,39 +175,58 @@ def get_visual_debug(prompt="<OCR_WITH_REGION>"):
         print("⚠️ 未找到有效盒子。")
         return
 
-    print(f"🎨 正在标注 {len(boxes)} 个目标...")
+    # 合并高度重叠的重复框（IoU > 0.5 视为同一目标）
+    def merge_overlaps(labels, boxes):
+        def to_rect(b):
+            if len(b) == 8:
+                xs, ys = [b[i] for i in range(0, 8, 2)], [b[i + 1] for i in range(0, 8, 2)]
+                return min(xs), min(ys), max(xs), max(ys)
+            elif len(b) == 4:
+                return b[1], b[0], b[3], b[2]  # [y1,x1,y2,x2] → left,top,right,bottom
+            return b[0], b[1], b[2], b[3]
 
-    for label, box in zip(labels, boxes):
-        nx1, ny1, nx2, ny2 = 0, 0, 0, 0
+        def iou(a, b):
+            ax1, ay1, ax2, ay2 = a
+            bx1, by1, bx2, by2 = b
+            ix, iy = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            if ix >= ix2 or iy >= iy2:
+                return 0.0
+            inter = (ix2 - ix) * (iy2 - iy)
+            area_a = (ax2 - ax1) * (ay2 - ay1)
+            area_b = (bx2 - bx1) * (by2 - by1)
+            return inter / min(area_a, area_b)
 
-        if len(box) == 8:
-            # Quad Box 处理
-            xs = [box[i] for i in range(0, 8, 2)]
-            ys = [box[i + 1] for i in range(0, 8, 2)]
-            nx1, ny1, nx2, ny2 = min(xs), min(ys), max(xs), max(ys)
-        elif len(box) == 4:
-            # Florence-2 默认为 [y1, x1, y2, x2]
-            v1, v2, v3, v4 = box
-            ny1, nx1, ny2, nx2 = v1, v2, v3, v4
+        rects = [to_rect(b) for b in boxes]
+        kept = []
+        for i, (lbl, rect) in enumerate(zip(labels, rects)):
+            merged = False
+            for j, (_, kept_rect) in enumerate(kept):
+                if iou(rect, kept_rect) > 0.5:
+                    merged = True
+                    break
+            if not merged:
+                kept.append((lbl, rect))
+        return kept
 
-        # 【关键点 3】严格映射
-        # 模型返回 0-1000 之间的比例，必须乘以截图的真实物理宽度/高度
-        left = (nx1 / 1000) * width
-        top = (ny1 / 1000) * height
-        right = (nx2 / 1000) * width
-        bottom = (ny2 / 1000) * height
+    merged = merge_overlaps(labels, boxes)
+    before = len(boxes)
+    boxes = None  # clear original
+    print(f"🎨 {before} 个检测 → {len(merged)} 个标注（去重后）")
 
-        # 纠错逻辑：防止模型返回顺序颠倒
-        real_left = min(left, right)
-        real_top = min(top, bottom)
-        real_right = max(left, right)
-        real_bottom = max(top, bottom)
+    for label, rect in merged:
+        left, top, right, bottom = rect
+        # 纠错：防止顺序颠倒
+        real_left, real_right = min(left, right), max(left, right)
+        real_top, real_bottom = min(top, bottom), max(top, bottom)
 
         # 绘图：使用亮绿色，增加线宽以适应高分辨率
         draw.rectangle([real_left, real_top, real_right, real_bottom], outline="lime", width=4)
 
-        # 绘制背景块让文字更清晰
-        text_str = str(label)
+        # 绘制标签文字，清洗模型特殊 token
+        text_str = str(label).replace('</s>', '').replace('<s>', '').strip()
+        if not text_str:
+            continue
         draw.text((real_left + 5, max(0, real_top - 35)), text_str, fill="lime", font=font)
 
     # 保存并展示

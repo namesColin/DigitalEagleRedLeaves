@@ -11,7 +11,10 @@ class VisionModule:
         from transformers import AutoProcessor, AutoModelForCausalLM
 
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.model_id = './models/Florence-2-large'
+        # 转为绝对路径，新版 transformers 不接受 ./ 开头的本地路径
+        import os as _os
+        _root = _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+        self.model_id = _os.path.join(_root, 'models', 'Florence-2-large')
 
         # 记录模型使用的精度
         self.dtype = torch.float16 if self.device == "cuda" else torch.float32
@@ -20,7 +23,7 @@ class VisionModule:
             self.model_id,
             trust_remote_code=True,
             attn_implementation="eager",
-            torch_dtype=self.dtype  # 统一使用 self.dtype
+            dtype=self.dtype
         ).to(self.device)
 
         self.processor = AutoProcessor.from_pretrained(
@@ -39,15 +42,15 @@ class VisionModule:
             inputs = {k: v.to(self.dtype) if k == "pixel_values" else v for k, v in inputs.items()}
 
         # 3. 推理核心
+        # use_cache=False 是 Florence-2 的必要 workaround，不能改
         with torch.no_grad():
             generated_ids = self.model.generate(
                 input_ids=inputs["input_ids"],
                 pixel_values=inputs["pixel_values"],
-                max_new_tokens=1024,
-                num_beams=3,
+                max_new_tokens=256,
+                num_beams=1,
                 do_sample=False,
-                # --- 关键修复参数 ---
-                use_cache=False,  # 强制禁用缓存，解决 past_key_values 为 None 的问题
+                use_cache=False,
                 early_stopping=False
             )
 

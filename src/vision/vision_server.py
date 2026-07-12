@@ -1,11 +1,18 @@
 import io
+import os
+import sys
 from fastapi import FastAPI, UploadFile, File
 from PIL import Image
-from .vision_model import VisionModule
 import uvicorn
 
+# 兼容直接运行和模块运行
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    from vision.vision_model import VisionModule
+else:
+    from .vision_model import VisionModule
+
 app = FastAPI()
-# 初始化视觉模型
 vision = VisionModule()
 
 @app.post("/analyze")
