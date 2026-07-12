@@ -1,9 +1,17 @@
 import asyncio
 import os
+import sys
 
-from .config import Config
-from .brain_engine import HongYeBrain
-from .personality import HongYePersonality
+# 兼容直接运行（python chat.py）和模块运行（python -m src.core.chat）
+if __name__ == "__main__" and __package__ is None:
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    from core.config import Config
+    from core.brain_engine import HongYeBrain
+    from core.personality import HongYePersonality
+else:
+    from .config import Config
+    from .brain_engine import HongYeBrain
+    from .personality import HongYePersonality
 
 async def main():
 
