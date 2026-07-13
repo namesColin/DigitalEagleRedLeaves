@@ -2,15 +2,16 @@
 视觉 Agent：Qwen 看图说话 + DeepSeek 文本匹配 + OmniParser 精确定位
 不设白名单——两个模型各做各擅长的事。
 """
-import time, math, random, re, io, base64, json
+import time, math, random, re, io, base64, json, asyncio
 import pyautogui, pyperclip
 
 
 class VisionAgent:
-    def __init__(self, vision_module, qwen_client=None, ds_client=None):
+    def __init__(self, vision_module, qwen_client=None, ds_client=None, overlay=None):
         self.vision = vision_module
         self.qwen = qwen_client
         self.ds = ds_client
+        self.overlay = overlay  # 浮动窗口
         self.history = []
         self._prev_shots = []
 
@@ -20,35 +21,49 @@ class VisionAgent:
         for s in range(1, max_steps+1):
             print(f"\n─ Step {s} ─")
             img = self._shot()
-            od = await self.vision.analyze(img, "<OD>")
-            ocr = await self.vision.analyze(img, "<OCR_WITH_REGION>")
+            # 并行 OD + OCR
+            od, ocr = await asyncio.gather(
+                self.vision.analyze(img, "<OD>"),
+                self.vision.analyze(img, "<OCR_WITH_REGION>"),
+            )
             els = self._index(od.get("boxes",[]), od.get("labels",[]),
                               ocr.get("labels",[]), ocr.get("boxes",[]))
 
             act = await self._decide(goal, els, img, s, expected)
-            msg = self._exec(act, els); print(f"  → {msg}")
-            time.sleep(2)
+            msg = self._exec(act, els)
+            print(f"  → {msg}")
+            time.sleep(1)
 
+            # 更新浮动窗
+            if self.overlay:
+                qwen_s = act.get("qwen_desc", "")
+                ds_s = f"{act.get('action')}: {act.get('reason','')}"
+                self.overlay.update(s, qwen_s, ds_s, msg)
+
+            # 因果追踪
             if self.qwen and act.get("action") not in ("ask","done"):
                 try:
                     cur = self._shot(); b64 = self._img_b64(cur)
                     er = await self.qwen.chat.completions.create(
-                        model="qwen-vl-max",
+                        model="qwen3.7-plus",
                         messages=[{"role":"user","content":[
                             {"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}},
                             {"type":"text","text":f"我刚做了: {msg}\n上一步预期: {expected}\n看截图简短描述: 1.实际发生了什么 2.接下来预期看到什么（一句话）"},
                         ]}], stream=False, timeout=30)
                     expected = er.choices[0].message.content.strip()
-                    print(f"  🔮 {expected[:120]}")
                 except Exception:
                     expected = "（未知）"
 
             cur = self._shot(); t = self._timing(cur)
             self.history.append({"step":s,"action":act.get("action"),"result":msg,"timing":t,"expected":expected})
 
-            if act.get("action")=="done": print(f"\n✅ {msg}"); return {"success":True,"steps":s,"log":self.history}
+            if act.get("action")=="done": return {"success":True,"steps":s,"log":self.history}
             if act.get("action")=="ask":
-                ans=input(f"\n  🤔 {act['question']}\n  → ").strip()
+                if self.overlay:
+                    ans = self.overlay.ask(act["question"])
+                else:
+                    ans = input(f"\n  🤔 {act['question']}\n  → ").strip()
+                if not ans: ans = "跳过"
                 goal = f"原始任务: {goal.split(chr(10))[0]}\n当前指令: {ans}"
                 expected = f"用户指示: {ans}"; continue
             if t=="static" and act.get("action")=="click": print("  ⚠ 画面未变化")
@@ -103,13 +118,14 @@ class VisionAgent:
             et+=f"  [{e['id']}] \"{t}\" ({int(e['center'][0])},{int(e['center'][1])})\n"
         ctx="\n".join([h["result"] for h in self.history[-3:]]) if self.history else "开始"
 
-        # Qwen: 看图说人话
+        # Qwen: 看图说人话（缩小图片加速推理）
         qwen_desc = "（视觉模型未配置）"
         if self.qwen:
             try:
-                b64=self._img_b64(img)
+                half = img.resize((img.width//2, img.height//2))
+                b64=self._img_b64(half)
                 qr=await self.qwen.chat.completions.create(
-                    model="qwen-vl-max",
+                    model="qwen3.7-plus",
                     messages=[{"role":"user","content":[
                         {"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}},
                         {"type":"text","text":f"你是桌面操作员。看截图简短描述:\n1.当前屏幕状态\n2.关键元素和位置\n3.基于目标「{goal}」的建议\n回复自然语言，不要JSON。"},
@@ -147,6 +163,7 @@ class VisionAgent:
                 if raw.startswith("```"): raw=raw.split("\n",1)[1].rstrip("```").strip()
                 act=json.loads(raw)
                 print(f"  DS: {act.get('action')} — {act.get('reason','')[:80]}")
+                act["qwen_desc"] = qwen_desc
                 return act
             except Exception as e:
                 print(f"  DS异常: {e}")
