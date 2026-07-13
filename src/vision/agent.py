@@ -7,13 +7,13 @@ import pyautogui, pyperclip
 
 
 class VisionAgent:
-    def __init__(self, vision_module, qwen_client=None, ds_client=None, overlay=None):
+    def __init__(self, vision_module, qwen_client=None, ds_client=None):
         self.vision = vision_module
         self.qwen = qwen_client
         self.ds = ds_client
-        self.overlay = overlay  # 浮动窗口
         self.history = []
         self._prev_shots = []
+        self._status_file = "outputs/agent_status.json"
 
     async def run(self, goal, max_steps=20):
         print(f"\n🎯 Agent: {goal}")
@@ -34,11 +34,9 @@ class VisionAgent:
             print(f"  → {msg}")
             time.sleep(1)
 
-            # 更新浮动窗
-            if self.overlay:
-                qwen_s = act.get("qwen_desc", "")
-                ds_s = f"{act.get('action')}: {act.get('reason','')}"
-                self.overlay.update(s, qwen_s, ds_s, msg)
+            # 写状态文件（供独立浮窗工具读取）
+            self._write_status(s, act.get("qwen_desc",""),
+                               f"{act.get('action')}: {act.get('reason','')}", msg)
 
             # 因果追踪
             if self.qwen and act.get("action") not in ("ask","done"):
@@ -59,10 +57,8 @@ class VisionAgent:
 
             if act.get("action")=="done": return {"success":True,"steps":s,"log":self.history}
             if act.get("action")=="ask":
-                if self.overlay:
-                    ans = self.overlay.ask(act["question"])
-                else:
-                    ans = input(f"\n  🤔 {act['question']}\n  → ").strip()
+                self._write_status(s, act["question"], "需要回答", "")
+                ans = input(f"\n  🤔 {act['question']}\n  → ").strip()
                 if not ans: ans = "跳过"
                 goal = f"原始任务: {goal.split(chr(10))[0]}\n当前指令: {ans}"
                 expected = f"用户指示: {ans}"; continue
@@ -179,6 +175,17 @@ class VisionAgent:
 
         preview="\n".join(f"  [{e['id']}] {e['ocr_text'] or e['od_label'][:40]}" for e in els[:12])
         return {"action":"ask","question":f"第{step}步: 「{goal}」\n当前:\n{preview}\n→ 指示编号或搜索词"}
+
+    def _write_status(self, step, qwen_desc, ds_action, result):
+        """写状态JSON文件，供独立浮窗工具读取。"""
+        try:
+            import os
+            os.makedirs("outputs", exist_ok=True)
+            with open(self._status_file, "w", encoding="utf-8") as f:
+                json.dump({"step":step,"qwen":qwen_desc[:300],
+                           "ds":ds_action[:200],"result":result[:200],
+                           "ts":time.time()}, f, ensure_ascii=False)
+        except Exception: pass
 
     def _img_b64(self, img):
         buf=io.BytesIO(); img.save(buf,format="PNG"); return base64.b64encode(buf.getvalue()).decode()
