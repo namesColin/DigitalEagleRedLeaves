@@ -1,7 +1,30 @@
 """规划层：感知-行动闭环。每轮截屏→视觉→LLM决定下一步→执行→验证。"""
-import json
+import json, os
+from PIL import ImageDraw, ImageFont
 from . import executor
 from .matcher import format_elements
+
+
+def _save_debug_image(screenshot, vision_result, step_num):
+    """保存标注截图到 outputs/debug_steps/ 供人工核查。"""
+    try:
+        img = screenshot.copy()
+        draw = ImageDraw.Draw(img)
+        try: font = ImageFont.truetype("msyh.ttc", 16)
+        except: font = ImageFont.load_default()
+        boxes = vision_result.get("boxes", [])
+        labels = vision_result.get("labels", [])
+        colors = ["lime", "cyan", "yellow", "magenta", "orange", "red"]
+        for i, (box, label) in enumerate(zip(boxes, labels)):
+            if len(box) != 4: continue
+            x1, y1, x2, y2 = [int(v) for v in box]
+            c = colors[i % len(colors)]
+            draw.rectangle([x1, y1, x2, y2], outline=c, width=2)
+            draw.text((x1 + 2, max(0, y2 - 18)), str(i), fill=c, font=font)
+        os.makedirs("outputs/debug_steps", exist_ok=True)
+        img.save(f"outputs/debug_steps/step_{step_num:02d}.png")
+    except Exception:
+        pass  # 调试保存失败不阻塞主流程
 
 STEP_PROMPT = """你是 Windows 桌面操作助手。根据当前屏幕状态，完成目标。
 
@@ -140,11 +163,14 @@ async def run(intent: str, text: str, vision_module, llm_client,
 
         # 1. 截屏 + 视觉检测
         screenshot = executor.screenshot()
+        w, h = screenshot.size
         vision_result = await vision_module.analyze(screenshot, "<OD>")
         elements_text = format_elements(
             vision_result.get("boxes", []),
-            vision_result.get("labels", [])
+            vision_result.get("labels", []),
+            screen_w=w, screen_h=h,
         )
+        _save_debug_image(screenshot, vision_result, step_num)
 
         # 2. LLM 决定下一步
         prompt = STEP_PROMPT.format(
@@ -159,8 +185,7 @@ async def run(intent: str, text: str, vision_module, llm_client,
             stream=False,
         )
         action = _parse_json(resp.choices[0].message.content)
-        print(f"  屏幕状态: {action.get('screen_state', '?')}")
-        print(f"  下一步: {action.get('action')} — {action.get('reason', '')}")
+        print(f"  DeepSeek 完整输出: {json.dumps(action, ensure_ascii=False)[:300]}")
 
         # 3. 如果是求助，暂停等用户回答
         if action.get("action") in ("ask_user", "ask", "help", "need_help"):

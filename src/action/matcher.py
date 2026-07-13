@@ -17,13 +17,30 @@ MATCH_PROMPT = """你是一个屏幕元素定位器。根据操作目标，从�
 {{"element_id": <编号>, "bbox": [x1,y1,x2,y2], "confidence": 0.9, "action": "click"}}"""
 
 
-def format_elements(boxes: list, labels: list) -> str:
-    lines = []
-    for i, (bbox, label) in enumerate(zip(boxes, labels)):
-        if len(bbox) == 4:
-            cx, cy = int((bbox[0]+bbox[2])/2), int((bbox[1]+bbox[3])/2)
-            w, h = int(bbox[2]-bbox[0]), int(bbox[3]-bbox[1])
-            lines.append(f"  [{i}] \"{label}\" 中心({cx},{cy}) {w}x{h}")
+def _region(cx, cy, sw, sh):
+    x = "左" if cx < sw//3 else ("右" if cx > sw*2//3 else "中")
+    y = "上" if cy < sh//3 else ("下" if cy > sh*2//3 else "中")
+    return f"{x}{y}"
+
+
+def format_elements(boxes: list, labels: list, screen_w: int = 2560, screen_h: int = 1600) -> str:
+    # 按 9 宫格区域分组
+    regions = {}
+    for i, (b, lbl) in enumerate(zip(boxes, labels)):
+        if len(b) != 4: continue
+        cx, cy = (b[0]+b[2])/2, (b[1]+b[3])/2
+        r = _region(cx, cy, screen_w, screen_h)
+        regions.setdefault(r, []).append((i, b, lbl))
+
+    lines = [f"画面 {screen_w}x{screen_h}，{len(boxes)} 个元素，按区域排列："]
+    for r in ["左上", "中上", "右上", "左中", "中中", "右中", "左下", "中下", "右下"]:
+        items = regions.get(r, [])
+        if not items: continue
+        lines.append(f"\n【{r}区域】{len(items)} 个元素:")
+        for i, b, lbl in items:
+            cx, cy = int((b[0]+b[2])/2), int((b[1]+b[3])/2)
+            w, h = int(b[2]-b[0]), int(b[3]-b[1])
+            lines.append(f"  [{i}] \"{lbl}\" ({cx},{cy}) {w}x{h}")
     return "\n".join(lines)
 
 
