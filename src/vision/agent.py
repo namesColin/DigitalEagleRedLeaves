@@ -131,7 +131,7 @@ class VisionAgent:
                     extra_body={"enable_thinking": True, "thinking_budget": 4096},
                     messages=[{"role":"user","content":[
                         {"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}},
-                        {"type":"text","text":f"你是桌面操作员。看截图简短描述:\n1.当前屏幕状态\n2.关键元素和位置\n3.基于目标「{goal}」的建议\n回复自然语言，不要JSON。"},
+                        {"type":"text","text":f"描述截图:\n1.当前状态(桌面/浏览器/IDE/开始菜单?)\n2.关键元素在哪个区域(顶部/底部/左侧/中间/右上角)+外观特征(长条/图标/按钮/文字)\n3.基于目标「{goal}」的下一步建议\n用自然语言回复，描述位置时要说清区域。"},
                     ]}], stream=False, timeout=60)
                 qwen_desc=qr.choices[0].message.content.strip()
                 print(f"  Qwen: {qwen_desc[:150]}")
@@ -145,7 +145,8 @@ class VisionAgent:
             try:
                 dr=await self.ds.client.chat.completions.create(
                     model=self.ds.model or "deepseek-v4-pro",
-                    messages=[{"role":"user","content":f"""你是桌面自动化规划师。根据当前状态，决定下一步操作。
+                    messages=[{"role":"user","content":"""
+你是桌面自动化规划师。根据当前状态，决定下一步操作。
 
 【目标】{goal}
 
@@ -159,18 +160,25 @@ class VisionAgent:
 
 【上一步预期 vs 实际】{expected}
 
-决策原则:
-1. 如果目标APP不在屏幕上 → 用win_search启动，不要点IDE/编辑器里的图标
-2. 如果屏幕上有目标元素 → click对应编号
-3. 如果画面是用户选择/登录界面 → 用ask问用户选哪个
-4. 如果上一步操作失败了 → 换策略，不要重复失败操作
-5. 如果浏览器已打开 → 找地址栏(宽输入框) → type网址 → press回车
-6. 如果目标已达成 → done
-7. IDE/代码编辑器/终端中的图标不要点击——那些不是桌面应用的入口
+匹配策略:
+1. 看元素列表中的形状标记[宽输入框][小图标]——搜索框是宽输入框，图标是小图标
+2. 对照Qwen描述的区域(顶部/中间/右侧等)找对应坐标的元素
+3. 先用OCR文字精确匹配，再用形状+位置组合匹配
+4. IDE/编辑器里的元素不要选——参考Qwen描述判断当前是IDE还是桌面
+5. 如果找不到匹配→用win_search或ask
 
 操作类型: click(N) | type("text") | press("key") | win_search("词") | ask("问题") | wait(N) | done("原因")
 
-只输出JSON，不要解释"""})], stream=False)
+输出示例:
+{{"action":"click","element_id":3}}
+{{"action":"win_search","query":"chrome"}}
+{{"action":"type","text":"bilibili.com"}}
+{{"action":"ask","question":"选哪个账号？"}}
+{{"action":"done","reason":"任务完成"}}
+
+只输出以上格式JSON，不加其他文字
+""".format(goal=goal, qwen_desc=qwen_desc, et=et, ctx=ctx, expected=expected)
+                    }], stream=False)
                 raw=dr.choices[0].message.content.strip()
                 if raw.startswith("```"): raw=raw.split("\n",1)[1].rstrip("```").strip()
                 act=json.loads(raw)
