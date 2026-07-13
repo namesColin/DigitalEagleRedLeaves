@@ -43,7 +43,8 @@ class VisionAgent:
                 try:
                     cur = self._shot(); b64 = self._img_b64(cur)
                     er = await self.qwen.chat.completions.create(
-                        model="qwen3.7-plus",
+                        model="qwen3-vl-plus",
+                        extra_body={"enable_thinking": True, "thinking_budget": 2048},
                         messages=[{"role":"user","content":[
                             {"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}},
                             {"type":"text","text":f"我刚做了: {msg}\n上一步预期: {expected}\n看截图简短描述: 1.实际发生了什么 2.接下来预期看到什么（一句话）"},
@@ -107,11 +108,16 @@ class VisionAgent:
         return "changing"
 
     async def _decide(self, goal, els, img, step, expected="（首次）"):
-        # 元素文本
+        # 元素文本（含几何特征）
         et=""
         for e in els:
             t=e["ocr_text"] or e["od_label"]
-            et+=f"  [{e['id']}] \"{t}\" ({int(e['center'][0])},{int(e['center'][1])})\n"
+            w=e["bbox"][2]-e["bbox"][0]; h=e["bbox"][3]-e["bbox"][1]
+            shape=""
+            if w>300 and h<80: shape=" [宽输入框]"
+            elif w<50 and h<50: shape=" [小图标]"
+            elif h>w*1.5: shape=" [竖向]"
+            et+=f"  [{e['id']}] {w:.0f}x{h:.0f}{shape} \"{t}\" ({int(e['center'][0])},{int(e['center'][1])})\n"
         ctx="\n".join([h["result"] for h in self.history[-3:]]) if self.history else "开始"
 
         # Qwen: 看图说人话（缩小图片加速推理）
@@ -121,13 +127,15 @@ class VisionAgent:
                 half = img.resize((img.width//2, img.height//2))
                 b64=self._img_b64(half)
                 qr=await self.qwen.chat.completions.create(
-                    model="qwen3.7-plus",
+                    model="qwen3-vl-plus",
+                    extra_body={"enable_thinking": True, "thinking_budget": 4096},
                     messages=[{"role":"user","content":[
                         {"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}},
                         {"type":"text","text":f"你是桌面操作员。看截图简短描述:\n1.当前屏幕状态\n2.关键元素和位置\n3.基于目标「{goal}」的建议\n回复自然语言，不要JSON。"},
                     ]}], stream=False, timeout=60)
                 qwen_desc=qr.choices[0].message.content.strip()
                 print(f"  Qwen: {qwen_desc[:150]}")
+                self._write_status(step, qwen_desc, "DeepSeek思考中...", "")
             except Exception as e:
                 qwen_desc=f"视觉模型异常:{e}"
                 print(f"  Qwen异常: {e}")

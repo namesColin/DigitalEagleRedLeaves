@@ -28,10 +28,10 @@ class Config:
     NEO4J_USER = "neo4j"
     NEO4J_PWD = "admin123"
 
-    # 视觉 LLM — Qwen3.7-Plus（阿里百炼 DashScope 北京）
-    GLM_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    # 视觉 LLM — Qwen3-VL-Plus（北京Workspace，支持thinking）
+    GLM_BASE_URL = "https://llm-93s604e2w9mf8awj.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
     GLM_API_KEY = "sk-ws-H.EDMRYLR.E9eg.MEQCIE8BVlP7zBNNjGve-CYMJgrRd-vsxROWMy6hZCr1ED32AiB_ihiHQz8FCXSxmxE79L0jtl1ZLZWvVfKMrlZK2wRkeQ"
-    GLM_VISION_MODEL = "qwen3.7-plus"
+    GLM_VISION_MODEL = "qwen3-vl-plus"
 
     # Embedding & Reranker — 始终使用本地 Ollama
     EMBED_BASE_URL = "http://localhost:11434/v1"
