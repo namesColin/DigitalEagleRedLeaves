@@ -140,29 +140,37 @@ class VisionAgent:
                 qwen_desc=f"视觉模型异常:{e}"
                 print(f"  Qwen异常: {e}")
 
-        # DeepSeek: 文本匹配→结构化JSON
+        # DeepSeek: 任务规划（不是元素匹配）
         if self.ds:
             try:
                 dr=await self.ds.client.chat.completions.create(
                     model=self.ds.model or "deepseek-v4-pro",
-                    messages=[{"role":"user","content":f"""根据视觉描述和元素列表，匹配下一步操作。
+                    messages=[{"role":"user","content":f"""你是桌面自动化规划师。根据当前状态，决定下一步操作。
 
-【视觉描述】{qwen_desc}
-【元素列表】{et}
 【目标】{goal}
-【历史】{ctx}
-【上一步预期】{expected}
 
-⚠️ 如果实际画面和上一步预期不一致（如预期打开Chrome却弹出了恢复会话窗口），应优先处理意外状态。
+【画面描述】{qwen_desc}
 
-找出与描述最匹配的元素编号。操作: click(N), type("text"), press("enter"), win_search("词"), ask("问题"), done("原因")
+【可用元素】
+{et}
 
-只输出JSON:
-{{"action":"click","element_id":3,"reason":"Colin在元素3"}}
-{{"action":"win_search","query":"chrome","reason":"桌面无Chrome"}}
-{{"action":"type","text":"bilibili.com","reason":"输入网址"}}
-{{"action":"click","element_id":5,"reason":"预期打开Chrome但弹出恢复会话，点否关掉"}}
-{{"action":"done","reason":"已看到bilibili"}}"""}], stream=False)
+【已执行步骤】
+{ctx}
+
+【上一步预期 vs 实际】{expected}
+
+决策原则:
+1. 如果目标APP不在屏幕上 → 用win_search启动，不要点IDE/编辑器里的图标
+2. 如果屏幕上有目标元素 → click对应编号
+3. 如果画面是用户选择/登录界面 → 用ask问用户选哪个
+4. 如果上一步操作失败了 → 换策略，不要重复失败操作
+5. 如果浏览器已打开 → 找地址栏(宽输入框) → type网址 → press回车
+6. 如果目标已达成 → done
+7. IDE/代码编辑器/终端中的图标不要点击——那些不是桌面应用的入口
+
+操作类型: click(N) | type("text") | press("key") | win_search("词") | ask("问题") | wait(N) | done("原因")
+
+只输出JSON，不要解释"""})], stream=False)
                 raw=dr.choices[0].message.content.strip()
                 if raw.startswith("```"): raw=raw.split("\n",1)[1].rstrip("```").strip()
                 act=json.loads(raw)
