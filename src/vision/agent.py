@@ -16,6 +16,7 @@ class VisionAgent:
 
     async def run(self, goal, max_steps=20):
         print(f"\n🎯 Agent: {goal}")
+        expected = "（首次）"
         for s in range(1, max_steps+1):
             print(f"\n─ Step {s} ─")
             img = self._shot()
@@ -24,17 +25,32 @@ class VisionAgent:
             els = self._index(od.get("boxes",[]), od.get("labels",[]),
                               ocr.get("labels",[]), ocr.get("boxes",[]))
 
-            act = await self._decide(goal, els, img, s)
+            act = await self._decide(goal, els, img, s, expected)
             msg = self._exec(act, els); print(f"  → {msg}")
             time.sleep(2)
 
+            if self.qwen and act.get("action") not in ("ask","done"):
+                try:
+                    cur = self._shot(); b64 = self._img_b64(cur)
+                    er = await self.qwen.chat.completions.create(
+                        model="qwen-vl-max",
+                        messages=[{"role":"user","content":[
+                            {"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}},
+                            {"type":"text","text":f"我刚做了: {msg}\n上一步预期: {expected}\n看截图简短描述: 1.实际发生了什么 2.接下来预期看到什么（一句话）"},
+                        ]}], stream=False, timeout=30)
+                    expected = er.choices[0].message.content.strip()
+                    print(f"  🔮 {expected[:120]}")
+                except Exception:
+                    expected = "（未知）"
+
             cur = self._shot(); t = self._timing(cur)
-            self.history.append({"step":s,"action":act.get("action"),"result":msg,"timing":t})
+            self.history.append({"step":s,"action":act.get("action"),"result":msg,"timing":t,"expected":expected})
 
             if act.get("action")=="done": print(f"\n✅ {msg}"); return {"success":True,"steps":s,"log":self.history}
             if act.get("action")=="ask":
                 ans=input(f"\n  🤔 {act['question']}\n  → ").strip()
-                goal=f"{goal}\n用户补充: {ans}"; continue
+                goal = f"原始任务: {goal.split(chr(10))[0]}\n当前指令: {ans}"
+                expected = f"用户指示: {ans}"; continue
             if t=="static" and act.get("action")=="click": print("  ⚠ 画面未变化")
         return {"success":False,"steps":max_steps,"log":self.history}
 
@@ -79,7 +95,7 @@ class VisionAgent:
         if not any(samples): return "static"
         return "changing"
 
-    async def _decide(self, goal, els, img, step):
+    async def _decide(self, goal, els, img, step, expected="（首次）"):
         # 元素文本
         et=""
         for e in els:
@@ -96,7 +112,7 @@ class VisionAgent:
                     model="qwen-vl-max",
                     messages=[{"role":"user","content":[
                         {"type":"image_url","image_url":{"url":f"data:image/png;base64,{b64}"}},
-                        {"type":"text","text":f"你是桌面操作员。看这张截图，用中文简短描述：\n1.当前屏幕状态（桌面/浏览器/开始菜单/用户选择界面/VS Code？）\n2.可见的关键元素和位置\n3.基于目标「{goal}」的下一步建议\n回复自然语言，不要JSON。"},
+                        {"type":"text","text":f"你是桌面操作员。看截图简短描述:\n1.当前屏幕状态\n2.关键元素和位置\n3.基于目标「{goal}」的建议\n回复自然语言，不要JSON。"},
                     ]}], stream=False, timeout=60)
                 qwen_desc=qr.choices[0].message.content.strip()
                 print(f"  Qwen: {qwen_desc[:150]}")
@@ -115,6 +131,9 @@ class VisionAgent:
 【元素列表】{et}
 【目标】{goal}
 【历史】{ctx}
+【上一步预期】{expected}
+
+⚠️ 如果实际画面和上一步预期不一致（如预期打开Chrome却弹出了恢复会话窗口），应优先处理意外状态。
 
 找出与描述最匹配的元素编号。操作: click(N), type("text"), press("enter"), win_search("词"), ask("问题"), done("原因")
 
@@ -122,6 +141,7 @@ class VisionAgent:
 {{"action":"click","element_id":3,"reason":"Colin在元素3"}}
 {{"action":"win_search","query":"chrome","reason":"桌面无Chrome"}}
 {{"action":"type","text":"bilibili.com","reason":"输入网址"}}
+{{"action":"click","element_id":5,"reason":"预期打开Chrome但弹出恢复会话，点否关掉"}}
 {{"action":"done","reason":"已看到bilibili"}}"""}], stream=False)
                 raw=dr.choices[0].message.content.strip()
                 if raw.startswith("```"): raw=raw.split("\n",1)[1].rstrip("```").strip()
