@@ -1,0 +1,11 @@
+{
+  "name": "digital_eagle_agent",
+  "version": "1.0",
+  "manifest_version": 3,
+  "description": "Agent bridge for browser automation",
+  "permissions": ["debugger", "tabs", "alarms"],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
