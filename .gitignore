@@ -16,10 +16,10 @@ venv/
 # ML Models (too large)
 models/
 
-# Output files (build artifacts, debug images, dist)
-outputs/build/
-outputs/dist/
-outputs/debug_images/
+# Output files (runtime artifacts)
+outputs/
+chrome_agent_profile/
+bash.exe.stackdump
 
 # PyInstaller build artifacts
 build/
